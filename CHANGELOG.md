@@ -5,6 +5,20 @@ and the versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+- `registry`, `registry-user` and `registry-token`, so a host can pull a private
+  image. The credential travels on stdin, never in the remote command, so it
+  reaches no process list on the host; the action signs the host out again when
+  the step ends. Passing the workflow's own `github.token` means nothing durable
+  is left there, because GitHub expires that token when the job finishes. On the
+  `remote-command` path the two lines go to that command's stdin, because a
+  restricted key cannot be asked to run `docker login`.
+
+### Fixed
+- Running `deploy.sh` directly with only some `INPUT_*` variables set crashed on
+  the first unset one rather than refusing. Every input now has its default in
+  the script, which is also what the refusal tests exercise.
+
 ### Changed
 - The repository belongs to Vernum Projecten B.V. and the licence is the
   Apache License 2.0, which adds the patent grant MIT does not carry. `LICENSE`

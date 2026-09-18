@@ -9,11 +9,45 @@
 # deployed are four different failures, and each one says which it is.
 set -euo pipefail
 
+# Every input, defaulted. A composite step always sets all of them; this script
+# is also run directly, by the refusal tests among others, and `set -u` would
+# turn a missing optional input into an unbound-variable crash that reads like
+# the refusal the test was looking for.
+INPUT_HOST="${INPUT_HOST:-}"
+INPUT_USER="${INPUT_USER:-deploy}"
+INPUT_PORT="${INPUT_PORT:-22}"
+INPUT_SSH_KEY="${INPUT_SSH_KEY:-}"
+INPUT_KNOWN_HOSTS="${INPUT_KNOWN_HOSTS:-}"
+INPUT_INSECURE="${INPUT_INSECURE:-false}"
+INPUT_IMAGE="${INPUT_IMAGE:-}"
+INPUT_REGISTRY="${INPUT_REGISTRY:-}"
+INPUT_REGISTRY_USER="${INPUT_REGISTRY_USER:-}"
+INPUT_REGISTRY_TOKEN="${INPUT_REGISTRY_TOKEN:-}"
+INPUT_COMPOSE_FILE="${INPUT_COMPOSE_FILE:-}"
+INPUT_SERVICE="${INPUT_SERVICE:-}"
+INPUT_REMOTE_COMMAND="${INPUT_REMOTE_COMMAND:-}"
+INPUT_VERIFY_URL="${INPUT_VERIFY_URL:-}"
+INPUT_VERIFY_CONTAINS="${INPUT_VERIFY_CONTAINS:-}"
+INPUT_VERIFY_TIMEOUT="${INPUT_VERIFY_TIMEOUT:-300}"
+INPUT_VERIFY_INTERVAL="${INPUT_VERIFY_INTERVAL:-5}"
+INPUT_ROLLBACK="${INPUT_ROLLBACK:-false}"
+INPUT_WAIT_HEALTHY="${INPUT_WAIT_HEALTHY:-}"
+INPUT_HEALTH_TIMEOUT="${INPUT_HEALTH_TIMEOUT:-120}"
+
 readonly SSH_DIR="${RUNNER_TEMP:-/tmp}/hetzner-deploy-$$"
 readonly KEY_FILE="$SSH_DIR/id"
 readonly KNOWN_HOSTS_FILE="$SSH_DIR/known_hosts"
 
+REGISTRY_LOGGED_IN=""
+
 cleanup() {
+  # The sign-in is undone before the key goes, because undoing it needs the
+  # key. A host that has become unreachable is not worth failing the cleanup
+  # over: the credential this leaves behind expires by itself.
+  if [[ -n "$REGISTRY_LOGGED_IN" ]]; then
+    remote "docker logout $(printf '%q' "$REGISTRY_LOGGED_IN")" > /dev/null 2>&1 || true
+    REGISTRY_LOGGED_IN=""
+  fi
   # The key goes whatever happened, including on every failure path.
   if [[ -d "$SSH_DIR" ]]; then
     find "$SSH_DIR" -type f -exec shred -u {} + 2>/dev/null || true
@@ -47,6 +81,12 @@ prepare_ssh() {
     while IFS= read -r line; do
       [[ -n "$line" ]] && echo "::add-mask::$line"
     done <<< "$INPUT_SSH_KEY"
+  fi
+
+  # The token is a secret the same way the key is, and it may arrive from
+  # somewhere the runner has not masked.
+  if [[ "${GITHUB_ACTIONS:-}" == "true" && -n "$INPUT_REGISTRY_TOKEN" ]]; then
+    echo "::add-mask::$INPUT_REGISTRY_TOKEN"
   fi
 
   mkdir -p "$SSH_DIR"
@@ -135,11 +175,61 @@ running_image_id() {
   remote "docker inspect --format '{{.Image}}' $(printf '%q' "$container")" 2>/dev/null || true
 }
 
+# ── The registry, for an image the host may not pull anonymously ─────────────
+# The host that pulls is not the host that authenticated to open this
+# connection, so a private image needs a credential ON THE HOST. The one thing
+# this must never do is leave that credential there: it goes over stdin, it is
+# used once, and the sign-in is undone in the cleanup.
+
+# The registry a reference names. Docker reads the first segment as a registry
+# only when it looks like a host, and uses docker.io otherwise, which is why
+# `alpine` and `example.com/alpine` resolve to different places
+# (https://docs.docker.com/reference/cli/docker/image/pull/#pull-from-a-different-registry).
+registry_of() {
+  local ref="$1" first="${1%%/*}"
+  if [[ "$ref" == */* && ( "$first" == *.* || "$first" == *:* || "$first" == localhost ) ]]; then
+    printf '%s' "$first"
+  else
+    printf 'docker.io'
+  fi
+}
+
+# Only on the compose path. A key restricted with command="…" runs its own
+# script for whatever you ask, so `docker login` cannot be issued separately
+# there; on the remote-command path the credential goes to that command's
+# stdin instead, and the script on the host decides what to do with it.
+registry_login() {
+  [[ -n "$INPUT_REGISTRY_TOKEN" ]] || return 0
+  local registry="$INPUT_REGISTRY"
+  if [[ -z "$registry" ]]; then
+    [[ -n "$INPUT_IMAGE" ]] \
+      || fail "registry-token was given with neither image nor registry, so there is nothing to sign in to. Name the registry the compose file pulls from."
+    registry="$(registry_of "$INPUT_IMAGE")"
+  fi
+  echo "→ signing in to ${registry} on ${INPUT_HOST}"
+  # The token reaches the host on stdin. In the remote command it would stand
+  # in that host's process list for the length of the pull, and in its shell
+  # history on some setups.
+  printf '%s' "$INPUT_REGISTRY_TOKEN" \
+    | remote "docker login --username $(printf '%q' "${INPUT_REGISTRY_USER:-x-access-token}") --password-stdin $(printf '%q' "$registry")" > /dev/null \
+    || fail "${INPUT_HOST} could not sign in to ${registry}. A GITHUB_TOKEN needs 'packages: read' on the job that passes it, and it is valid only while that job runs."
+  REGISTRY_LOGGED_IN="$registry"
+}
+
 # ── The deploy itself ────────────────────────────────────────────────────────
 deploy() {
   if [[ -n "$INPUT_REMOTE_COMMAND" ]]; then
     echo "→ running the supplied command on ${INPUT_HOST}"
-    remote "$INPUT_REMOTE_COMMAND"
+    if [[ -n "$INPUT_REGISTRY_TOKEN" ]]; then
+      # Two lines, username then token, for a script on the host that signs in
+      # itself. A restricted key cannot be asked to run `docker login`, so this
+      # is the only way a credential reaches that path, and it still never
+      # appears in the command.
+      printf '%s\n%s\n' "${INPUT_REGISTRY_USER:-x-access-token}" "$INPUT_REGISTRY_TOKEN" \
+        | remote "$INPUT_REMOTE_COMMAND"
+    else
+      remote "$INPUT_REMOTE_COMMAND"
+    fi
     return
   fi
 
@@ -279,6 +369,10 @@ main() {
     [[ -n "$before" ]] && echo "→ ${before} is running now, and is what a failed verification returns to"
   fi
 
+  # Only the compose path signs in from here. On the remote-command path the
+  # credential goes to that command's stdin, because a restricted key runs its
+  # own script for whatever you ask.
+  [[ -z "$INPUT_REMOTE_COMMAND" ]] && registry_login
   deploy
   record_digest
   local rolled=false
@@ -314,4 +408,8 @@ main() {
   fail "the deploy landed and ${INPUT_HOST} does not serve it. See the errors above for what the rollback did."
 }
 
-main "$@"
+# Sourcing this file defines its functions and runs nothing, so a test can
+# exercise one of them on its own.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
