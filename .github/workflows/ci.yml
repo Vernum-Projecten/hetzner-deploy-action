@@ -280,12 +280,19 @@ jobs:
         run: |
           set -euo pipefail
           secret="token-that-must-not-be-printed"
+          # The status is read rather than inherited: `out="$( … )"` under -e
+          # aborts the step before the output it captured can be printed, which
+          # hides the refusal that caused it.
+          set +e
           out="$(env INPUT_HOST=127.0.0.1 INPUT_USER=runner INPUT_SSH_KEY="$KEY" \
               INPUT_KNOWN_HOSTS="$KNOWN" \
               INPUT_REMOTE_COMMAND=/opt/credential/record.sh \
               INPUT_REGISTRY_USER=ci INPUT_REGISTRY_TOKEN="$secret" \
               ./deploy.sh 2>&1)"
+          rc=$?
+          set -e
           echo "$out"
+          [[ "$rc" -eq 0 ]] || { echo "::error::the deploy failed (exit $rc)"; exit 1; }
           grep -qx ci /opt/credential/handed \
             || { echo "::error::the host did not receive the username on stdin"; exit 1; }
           grep -qx "$secret" /opt/credential/handed \

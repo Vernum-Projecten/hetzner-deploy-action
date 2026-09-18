@@ -369,7 +369,10 @@ main() {
     [[ -n "$before" ]] && echo "→ ${before} is running now, and is what a failed verification returns to"
   fi
 
-  registry_login
+  # Only the compose path signs in from here. On the remote-command path the
+  # credential goes to that command's stdin, because a restricted key runs its
+  # own script for whatever you ask.
+  [[ -z "$INPUT_REMOTE_COMMAND" ]] && registry_login
   deploy
   record_digest
   local rolled=false
