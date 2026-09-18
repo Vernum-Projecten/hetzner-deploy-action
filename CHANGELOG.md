@@ -5,6 +5,12 @@ and the versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Changed
+- The repository belongs to Vernum Projecten B.V. and the licence is the
+  Apache License 2.0, which adds the patent grant MIT does not carry. `LICENSE`
+  is the canonical text, `NOTICE` names the holder, and `action.yml` and
+  `deploy.sh` carry SPDX headers. Copies already taken under MIT stay MIT.
+
 ## [1.0.1] - 2026-08-31
 
 ### Fixed
