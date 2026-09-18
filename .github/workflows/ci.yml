@@ -280,29 +280,47 @@ jobs:
         run: |
           set -euo pipefail
           secret="token-that-must-not-be-printed"
-          # The status is read rather than inherited: `out="$( … )"` under -e
-          # aborts the step before the output it captured can be printed, which
-          # hides the refusal that caused it.
+
+          # GITHUB_ACTIONS is cleared on purpose, the way the key test does it:
+          # with no runner listening the script must register nothing, so
+          # anything matching here is a genuine leak rather than a mask command
+          # nobody consumed.
+          captured="$RUNNER_TEMP/credential.log"
           set +e
-          out="$(env INPUT_HOST=127.0.0.1 INPUT_USER=runner INPUT_SSH_KEY="$KEY" \
-              INPUT_KNOWN_HOSTS="$KNOWN" \
+          env GITHUB_ACTIONS= INPUT_HOST=127.0.0.1 INPUT_USER=runner INPUT_PORT=22 \
+              INPUT_SSH_KEY="$KEY" INPUT_KNOWN_HOSTS="$KNOWN" \
               INPUT_REMOTE_COMMAND=/opt/credential/record.sh \
               INPUT_REGISTRY_USER=ci INPUT_REGISTRY_TOKEN="$secret" \
-              ./deploy.sh 2>&1)"
+              GITHUB_OUTPUT=/dev/null \
+              ./deploy.sh > "$captured" 2>&1
           rc=$?
           set -e
-          echo "$out"
+          cat "$captured"
           [[ "$rc" -eq 0 ]] || { echo "::error::the deploy failed (exit $rc)"; exit 1; }
+
           grep -qx ci /opt/credential/handed \
             || { echo "::error::the host did not receive the username on stdin"; exit 1; }
           grep -qx "$secret" /opt/credential/handed \
             || { echo "::error::the host did not receive the token on stdin"; exit 1; }
-          # Masking is the runner's job and it redacts only what it was told
-          # about; this asserts the script never had to rely on it.
-          if printf '%s' "$out" | grep -qF "$secret"; then
-            echo "::error::the token appeared in the action's own output"; exit 1
+          if grep -qF -- "$secret" "$captured"; then
+            echo "::error::the action printed the token"; exit 1
           fi
-          echo "the credential went over stdin and nowhere else"
+
+          # And under a runner, the only line carrying it may be the
+          # registration itself, which the runner consumes and never prints.
+          masked="$RUNNER_TEMP/credential-masked.log"
+          set +e
+          env INPUT_HOST=127.0.0.1 INPUT_USER=runner INPUT_PORT=22 \
+              INPUT_SSH_KEY="$KEY" INPUT_KNOWN_HOSTS="$KNOWN" \
+              INPUT_REMOTE_COMMAND=/opt/credential/record.sh \
+              INPUT_REGISTRY_USER=ci INPUT_REGISTRY_TOKEN="$secret" \
+              GITHUB_OUTPUT=/dev/null \
+              ./deploy.sh > "$masked" 2>&1
+          set -e
+          if grep -F -- "$secret" "$masked" | grep -qv '^::add-mask::'; then
+            echo "::error::the token appeared outside the mask registration"; exit 1
+          fi
+          echo "the credential went over stdin, and nowhere else"
 
       - name: A sign-in that cannot happen fails loudly
         env:
