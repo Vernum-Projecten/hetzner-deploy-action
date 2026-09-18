@@ -6,7 +6,7 @@ green until that host actually serves what you deployed.
 Written for a Hetzner box, and it works on any host with SSH and Docker.
 
 ```yaml
-- uses: rubentalstra/hetzner-deploy-action@v1
+- uses: Vernum-Projecten/hetzner-deploy-action@v1
   with:
     host: console.example.com
     user: deploy
@@ -31,7 +31,7 @@ sudo) and let the key be an ordinary one.
 thing:
 
 ```yaml
-- uses: rubentalstra/hetzner-deploy-action@v1
+- uses: Vernum-Projecten/hetzner-deploy-action@v1
   with:
     host: console.example.com
     ssh-key: ${{ secrets.DEPLOY_SSH_KEY }}
@@ -267,7 +267,7 @@ purpose, and the integration job is the contract that keeps it true.
 Pin a full commit SHA instead if you want bytes rather than a promise:
 
 ```yaml
-- uses: rubentalstra/hetzner-deploy-action@<full 40-character sha> # v1.0.0
+- uses: Vernum-Projecten/hetzner-deploy-action@<full 40-character sha> # v1.0.0
 ```
 
 The release lane verifies the tagged commit, publishes the release, and moves
