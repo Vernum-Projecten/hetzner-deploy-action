@@ -229,4 +229,4 @@ than a re-read.
 
 ## Licence
 
-MIT.
+Apache License 2.0 (`LICENSE`, `NOTICE`). Copyright Vernum Projecten B.V.

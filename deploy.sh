@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: Vernum Projecten B.V.
+# SPDX-License-Identifier: Apache-2.0
 # Deploy a container image to a host over SSH, then prove the host serves it.
 #
 # The order matters and is the whole point. Every step refuses rather than

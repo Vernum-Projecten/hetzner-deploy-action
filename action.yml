@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Vernum Projecten B.V.
+# SPDX-License-Identifier: Apache-2.0
 name: Hetzner deploy and verify
 # Under 125 characters, which the Marketplace requires and the release lane
 # checks. The long version is the README's first paragraph.
