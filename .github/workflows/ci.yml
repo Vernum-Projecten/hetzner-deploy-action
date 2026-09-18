@@ -211,6 +211,134 @@ jobs:
   # Rollback is only worth having if it has been watched working, so this drives
   # a real moving tag: a local registry, two different images behind one
   # reference, and a deploy that cannot verify.
+  # The credential path, without a registry. A private registry needs TLS for
+  # basic auth to work at all, and a self-signed chain plus a docker daemon
+  # restart would test the registry rather than this action. What belongs to
+  # this action is narrower and is all checked here: the reference parser, that
+  # the credential reaches the host on stdin and not in the command, and that a
+  # sign-in which cannot happen fails loudly instead of pulling anonymously.
+  credential:
+    name: the registry credential reaches the host on stdin
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The registry a reference names
+        run: |
+          set -euo pipefail
+          # Sourcing defines the functions and runs nothing.
+          # shellcheck source=deploy.sh
+          source ./deploy.sh
+          check() {
+            local got
+            got="$(registry_of "$1")"
+            [[ "$got" == "$2" ]] || { echo "::error::registry_of $1 said '$got', not '$2'"; exit 1; }
+          }
+          check ghcr.io/owner/name ghcr.io
+          check localhost:5000/name localhost:5000
+          check registry.example.com:5000/a/b registry.example.com:5000
+          check alpine docker.io
+          check library/nginx docker.io
+          echo "the parser agrees with docker's own rule"
+
+      - name: An SSH host, and a command that records what it is handed
+        id: host
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openssh-server >/dev/null
+          sudo systemctl start ssh
+          ssh-keygen -t ed25519 -f "$RUNNER_TEMP/key" -N "" -C ci@test
+          mkdir -p ~/.ssh
+          cat "$RUNNER_TEMP/key.pub" >> ~/.ssh/authorized_keys
+          chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys
+          mkdir -p /opt/credential
+          cat > /opt/credential/record.sh <<'SH'
+          #!/usr/bin/env bash
+          # Stands in for the script a restricted key runs: it reads the two
+          # lines and writes them where the test can read them back.
+          set -euo pipefail
+          read -r user || true
+          read -r token || true
+          printf '%s\n%s\n' "$user" "$token" > /opt/credential/handed
+          SH
+          chmod +x /opt/credential/record.sh
+          {
+            echo 'key<<KEY_EOF'; cat "$RUNNER_TEMP/key"; echo 'KEY_EOF'
+            echo 'known<<KNOWN_EOF'; ssh-keyscan -p 22 127.0.0.1; echo 'KNOWN_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: The credential reaches the host, and is in no log
+        env:
+          KEY: ${{ steps.host.outputs.key }}
+          KNOWN: ${{ steps.host.outputs.known }}
+        run: |
+          set -euo pipefail
+          secret="token-that-must-not-be-printed"
+          out="$(env INPUT_HOST=127.0.0.1 INPUT_USER=runner INPUT_SSH_KEY="$KEY" \
+              INPUT_KNOWN_HOSTS="$KNOWN" \
+              INPUT_REMOTE_COMMAND=/opt/credential/record.sh \
+              INPUT_REGISTRY_USER=ci INPUT_REGISTRY_TOKEN="$secret" \
+              ./deploy.sh 2>&1)"
+          echo "$out"
+          grep -qx ci /opt/credential/handed \
+            || { echo "::error::the host did not receive the username on stdin"; exit 1; }
+          grep -qx "$secret" /opt/credential/handed \
+            || { echo "::error::the host did not receive the token on stdin"; exit 1; }
+          # Masking is the runner's job and it redacts only what it was told
+          # about; this asserts the script never had to rely on it.
+          if printf '%s' "$out" | grep -qF "$secret"; then
+            echo "::error::the token appeared in the action's own output"; exit 1
+          fi
+          echo "the credential went over stdin and nowhere else"
+
+      - name: A sign-in that cannot happen fails loudly
+        env:
+          KEY: ${{ steps.host.outputs.key }}
+          KNOWN: ${{ steps.host.outputs.known }}
+        run: |
+          set -euo pipefail
+          mkdir -p /opt/credential/compose
+          cat > /opt/credential/compose/docker-compose.yml <<'YML'
+          services:
+            fixture:
+              image: nginx:1.29-alpine
+          YML
+          # Nothing listens on 5999, so the sign-in cannot succeed. Pulling
+          # anonymously after that would be the silent failure this guards.
+          if out="$(env INPUT_HOST=127.0.0.1 INPUT_USER=runner INPUT_SSH_KEY="$KEY" \
+              INPUT_KNOWN_HOSTS="$KNOWN" \
+              INPUT_COMPOSE_FILE=/opt/credential/compose/docker-compose.yml \
+              INPUT_REGISTRY=127.0.0.1:5999 INPUT_REGISTRY_TOKEN=whatever \
+              ./deploy.sh 2>&1)"; then
+            echo "$out"
+            echo "::error::the action deployed although the registry sign-in failed"; exit 1
+          fi
+          echo "$out"
+          printf '%s' "$out" | grep -q "could not sign in to 127.0.0.1:5999" \
+            || { echo "::error::the failure did not name the registry"; exit 1; }
+          echo "the refusal held and named the registry"
+
+      - name: A token with neither image nor registry is refused
+        env:
+          KEY: ${{ steps.host.outputs.key }}
+          KNOWN: ${{ steps.host.outputs.known }}
+        run: |
+          set -euo pipefail
+          if env INPUT_HOST=127.0.0.1 INPUT_USER=runner INPUT_SSH_KEY="$KEY" \
+              INPUT_KNOWN_HOSTS="$KNOWN" \
+              INPUT_COMPOSE_FILE=/opt/credential/compose/docker-compose.yml \
+              INPUT_REGISTRY_TOKEN=whatever \
+              ./deploy.sh > /dev/null 2>&1; then
+            echo "::error::the action accepted a token with nothing to sign in to"; exit 1
+          fi
+          echo "the refusal held"
+
   rollback:
     name: a failed verification puts the previous version back
     runs-on: ubuntu-latest
@@ -315,7 +443,7 @@ jobs:
 
   conclusion:
     name: conclusion
-    needs: [lint, deploy, rollback]
+    needs: [lint, deploy, credential, rollback]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -102,6 +102,9 @@ your account. The actions that combine both are solving a different problem.
 | `known-hosts` | yes* | | The host's public key, as `ssh-keyscan` prints it |
 | `insecure-accept-any-host-key` | | `false` | Skip host key verification, loudly |
 | `image` | | | The image to deploy, by tag or digest |
+| `registry` | | | The registry the host signs in to; empty means the one `image` names |
+| `registry-user` | | `x-access-token` | The username for that sign-in |
+| `registry-token` | | | The credential the **host** pulls with, for a private image |
 | `compose-file` | one of | | A compose file **on the host** |
 | `service` | | | The compose service to restart; empty means all of them |
 | `remote-command` | one of | | A command to run instead of the compose path |
@@ -122,6 +125,56 @@ your account. The actions that combine both are solving a different problem.
 | `digest` | The image digest running on the host after the deploy |
 | `verified` | Whether the verification ran and passed |
 | `rolled-back` | Whether a failed verification put the previous digest back |
+
+## A private image
+
+The host that pulls is not the host that authenticated to open the SSH
+connection, so a private image needs a credential on the host. Most guides
+answer that with a long-lived token in a file there. This one does not need
+one:
+
+```yaml
+permissions:
+  contents: read
+  packages: read        # what the token below is allowed to do
+
+steps:
+  - uses: Vernum-Projecten/hetzner-deploy-action@v1
+    with:
+      host: console.example.com
+      ssh-key: ${{ secrets.DEPLOY_SSH_KEY }}
+      known-hosts: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      image: ghcr.io/example/console@sha256:...
+      compose-file: /opt/console/docker-compose.yml
+      service: console
+      registry-user: ${{ github.actor }}
+      registry-token: ${{ github.token }}
+      verify-url: https://console.example.com/
+      verify-contains: "1.2.3"
+```
+
+`github.token` "expires when the job finishes", six hours at the outside
+(<https://docs.github.com/en/actions/concepts/security/github_token>), so what
+the host is handed is useless by the time anyone could find it. The action
+signs the host in before the pull and signs it out again when the step ends,
+whether the deploy passed or failed.
+
+The token travels on **stdin**. It is never part of the remote command, so it
+reaches no process list on the host and no shell history. Any registry works,
+not only GHCR: name it with `registry` and pass whatever credential that
+registry wants.
+
+On the `remote-command` path the action cannot issue `docker login` itself,
+because a key restricted with `command="…"` runs its own script for whatever
+you ask. There the credential is handed to that script on stdin instead, two
+lines, the username then the token, and the script decides what to do with
+them:
+
+```bash
+read -r user || true
+read -r token || true
+[[ -n "$token" ]] && printf '%s' "$token" | docker login ghcr.io -u "$user" --password-stdin
+```
 
 ## Setting up the host
 

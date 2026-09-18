@@ -63,6 +63,27 @@ inputs:
       mutually exclusive, and one of them is required.
     required: false
     default: ""
+  registry:
+    description: >-
+      The registry the host signs in to before it pulls. Empty means the one
+      `image` names, or `docker.io` when it names none. Set it explicitly on
+      the compose path when no `image` is given.
+    required: false
+    default: ""
+  registry-user:
+    description: The username for that sign-in. Defaults to `x-access-token`, which is what a token-as-password wants.
+    required: false
+    default: ""
+  registry-token:
+    description: >-
+      The credential the HOST pulls with, for a private image. Normally the
+      calling job's `github.token` with `packages: read`: GitHub expires it
+      when the job finishes, so nothing durable is left on the host. It
+      travels on stdin, never in the remote command, so it reaches no process
+      list and no file there. Left empty, nothing signs in and a private image
+      fails the way it did before.
+    required: false
+    default: ""
   verify-url:
     description: >-
       A URL fetched FROM THE RUNNER after the deploy, so what is proved is the
@@ -130,6 +151,9 @@ runs:
         INPUT_KNOWN_HOSTS: ${{ inputs.known-hosts }}
         INPUT_INSECURE: ${{ inputs.insecure-accept-any-host-key }}
         INPUT_IMAGE: ${{ inputs.image }}
+        INPUT_REGISTRY: ${{ inputs.registry }}
+        INPUT_REGISTRY_USER: ${{ inputs.registry-user }}
+        INPUT_REGISTRY_TOKEN: ${{ inputs.registry-token }}
         INPUT_COMPOSE_FILE: ${{ inputs.compose-file }}
         INPUT_SERVICE: ${{ inputs.service }}
         INPUT_REMOTE_COMMAND: ${{ inputs.remote-command }}
