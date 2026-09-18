@@ -5,6 +5,14 @@ and the versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-18
+
+### Changed
+- The repository belongs to the Vernum Projecten organisation, so the README,
+  the changelog links and the security-advisory link name it. Old references
+  keep working through GitHub's redirect; new ones should read
+  `Vernum-Projecten/hetzner-deploy-action`.
+
 ### Added
 - `registry`, `registry-user` and `registry-token`, so a host can pull a private
   image. The credential travels on stdin, never in the remote command, so it
@@ -77,6 +85,7 @@ and the versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - An integration job that deploys to a real SSH host and then drives three
   refusals, failing if any of them passes.
 
-[unreleased]: https://github.com/rubentalstra/hetzner-deploy-action/compare/v1.0.1...HEAD
-[1.0.0]: https://github.com/rubentalstra/hetzner-deploy-action/releases/tag/v1.0.0
-[1.0.1]: https://github.com/rubentalstra/hetzner-deploy-action/releases/tag/v1.0.1
+[unreleased]: https://github.com/Vernum-Projecten/hetzner-deploy-action/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/Vernum-Projecten/hetzner-deploy-action/releases/tag/v1.1.0
+[1.0.0]: https://github.com/Vernum-Projecten/hetzner-deploy-action/releases/tag/v1.0.0
+[1.0.1]: https://github.com/Vernum-Projecten/hetzner-deploy-action/releases/tag/v1.0.1
